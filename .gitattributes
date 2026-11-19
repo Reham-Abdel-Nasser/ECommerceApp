@@ -1,0 +1,28 @@
+# Normalize line endings: store LF in the repo, let git convert on checkout
+* text=auto
+
+# Source files
+*.cs        text diff=csharp
+*.csproj    text
+*.slnx      text
+*.json      text
+*.http      text
+*.md        text diff=markdown
+*.yml       text
+*.yaml      text
+
+# Windows-only scripts keep CRLF
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Shell scripts must stay LF
+*.sh        text eol=lf
+
+# Binary files: never touch
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.zip       binary
