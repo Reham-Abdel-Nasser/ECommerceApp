@@ -1,0 +1,17 @@
+@host = http://localhost:5016/api
+@productId = 77777777-7777-7777-7777-77777777
+GET {{host}}/products/
+Accept: application/json
+
+###
+
+GET {{host}}/products/{{productId}}
+Accept: application/json
+
+###
+POST {{host}}/products
+Accept: application/json
+
+{
+
+}

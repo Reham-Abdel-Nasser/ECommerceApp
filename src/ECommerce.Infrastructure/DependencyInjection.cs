@@ -1,0 +1,164 @@
+﻿using ECommerce.Domain.Repositories;
+using ECommerce.Infrastructure.Caching;
+using ECommerce.Infrastructure.Identity;
+using ECommerce.Infrastructure.Payments;
+using ECommerce.Infrastructure.Persistence.DbContexts;
+using ECommerce.Infrastructure.Persistence.Interceptors;
+using ECommerce.Infrastructure.Persistence.Seeding;
+using ECommerce.Infrastructure.Repositories;
+using ECommerce.Infrastructure.Services;
+using ECommerce.UseCases.Commons.Interfaces;
+using ECommerce.UseCases.Commons.Options;
+using ECommerce.UseCases.Commons.Settings;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+
+namespace ECommerce.Infrastructure;
+
+public static class DependencyInjection
+{
+    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    {
+        // Register StoreDbContext using PostgreSQL
+        var connectionString = configuration.GetConnectionString("DefaultConnection")
+            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is missing.");
+
+        services.AddDbContext<StoreDbContext>(options =>
+        {
+            options.UseSqlServer(connectionString, sql => sql.MigrationsHistoryTable("__ApplicationMigrationsHistory"))
+                    .EnableSensitiveDataLogging();
+        });
+
+        services.AddDbContext<IdentityStoreDbContext>(options =>
+        {
+            options.UseSqlServer(connectionString, sql => sql.MigrationsHistoryTable("__IdentityMigrationsHistory"))
+                    .EnableSensitiveDataLogging();
+        });
+
+        services.AddIdentityCore<ApplicationUser>(options =>
+        {
+            options.Password.RequiredLength = 8;
+            options.Password.RequireDigit = true;
+            options.User.RequireUniqueEmail = true;
+            options.Lockout.MaxFailedAccessAttempts = 5;
+            options.SignIn.RequireConfirmedEmail = true;
+            options.SignIn.RequireConfirmedAccount = true;
+        })
+        .AddRoles<ApplicationRole>()
+        .AddEntityFrameworkStores<IdentityStoreDbContext>()
+        .AddDefaultTokenProviders();
+
+        services.Configure<JwtSettings>(configuration.GetSection(JwtSettings.SectionName));
+        var jwtSettings = configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
+            ?? throw new InvalidOperationException($"Configuration section '{JwtSettings.SectionName}' is missing.");
+
+        if (string.IsNullOrWhiteSpace(jwtSettings.Secret) || jwtSettings.Secret.Length < 32)
+            throw new InvalidOperationException("Jwt:Secret must be at least 32 characters.");    
+
+        services.AddAuthentication(options =>
+           {
+               options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+
+               options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+           })
+           .AddJwtBearer(options =>
+           {
+               options.TokenValidationParameters = new TokenValidationParameters
+               {
+                   ValidateIssuer = true,
+                   ValidIssuer = jwtSettings!.Issuer,
+                   ValidateAudience = true,
+                   ValidAudience = jwtSettings.Audience,
+                   ValidateIssuerSigningKey = true,
+                   IssuerSigningKey = new SymmetricSecurityKey(
+                       Encoding.UTF8.GetBytes(jwtSettings.Secret)),
+                   ValidateLifetime = true,
+
+                   ClockSkew = TimeSpan.Zero,
+               };
+           });
+
+        services.AddAuthorization();
+
+        services.AddHttpContextAccessor();
+
+        services.AddScoped<IIdentityService, IdentityService>();
+        services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
+        services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+        services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<IEmailVerificationCodeStore, HybridEmailVerificationCodeStore>();
+
+        services.Configure<EmailVerificationSettings>(
+            configuration.GetSection(EmailVerificationSettings.SectionName));
+
+        services.Configure<EmailSettings>(configuration.GetSection(EmailSettings.SectionName));
+        var emailSettings = configuration.GetSection(EmailSettings.SectionName).Get<EmailSettings>()
+            ?? throw new InvalidOperationException(
+                $"Configuration section '{EmailSettings.SectionName}' is missing.");
+
+        services
+            .AddFluentEmail(emailSettings.FromEmail, emailSettings.FromName)
+            .AddSmtpSender(emailSettings.Host, emailSettings.Port);
+
+        services.AddScoped<IEmailSender, FluentEmailSender>();
+
+        services.AddScoped<IAuditInterceptor, AuditInterceptor>();
+        services.AddScoped<ISoftDeleteInterceptor, SoftDeleteInterceptor>();
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
+
+        services.AddScoped(typeof(IReadRepository<>), typeof(Repository<>));
+        services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+
+        services.AddScoped<IDataSeeder, IdentitySeeder>();
+        services.AddScoped<IDataSeeder, ProductBrandSeeder>();
+        services.AddScoped<IDataSeeder, ProductTypeSeeder>();
+        services.AddScoped<IDataSeeder, DeliveryMethodSeeder>();
+
+        services.AddScoped<DatabaseSeeder>();
+
+        services.Configure<CloudinarySettings>(configuration.GetSection("CloudinarySettings"));
+
+        services.AddScoped<IAttachmentService, AttachmentService>();
+
+        services.Configure<StripeSettings>(configuration.GetSection(StripeSettings.SectionName));
+        services.AddScoped<IPaymentService, StripePaymentService>();
+
+        AddBasketCachhing(services, configuration);
+
+        return services;
+    }
+
+    private static void AddBasketCachhing(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<CacheEntryPolicy>("Basket")
+            .Bind(configuration.GetSection("CachedAggregate:Basket"))
+            .ValidateOnStart();
+
+        services.AddSingleton<IValidateOptions<CacheEntryPolicy>, CacheEntryPolicyValidator>();
+
+        var redisConnection = configuration.GetConnectionString("Redis");
+
+        if (!string.IsNullOrWhiteSpace(redisConnection))
+        {
+            services.AddStackExchangeRedisCache(options =>
+            options.Configuration = redisConnection);
+        }
+        else
+        {
+            services.AddDistributedMemoryCache();
+        }
+
+        services.AddHybridCache();
+
+        services.AddScoped(typeof(ICachedAggregateStore<>), typeof(HybridCachedAggregateStore<>));
+
+        services.AddScoped<IBasketStore, HybridBasketStore>();
+
+    }
+}
