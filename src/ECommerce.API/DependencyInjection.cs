@@ -44,7 +44,7 @@ public static class DependencyInjection
         {
             var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
             var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-            //options.IncludeXmlComments(xmlPath);
+            options.IncludeXmlComments(xmlPath);
             options.OperationFilter<SwaggerDefaultValues>();
 
             options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
