@@ -10,37 +10,56 @@ namespace ECommerce.Infrastructure.Identity;
 /// Dev stub: logs the email (including verification code) to the console.
 /// Later: inject <c>IFluentEmailFactory</c> and call FluentEmail SMTP send here.
 /// </summary>
-public sealed class FluentEmailSender(ILogger<FluentEmailSender> logger) : IEmailSender
+public sealed class FluentEmailSender(
+    IFluentEmailFactory emailFactory,
+    ILogger<FluentEmailSender> logger) : IEmailSender
 {
-    public Task<Result> SendAsync(
+    public async Task<Result> SendAsync(
         string toEmail,
         string subject,
         string body,
         CancellationToken cancellationToken = default)
     {
-        _ = cancellationToken;
+        try
+        {
+            var email = emailFactory
+                .Create()
+                .To(toEmail)
+                .Subject(subject)
+                .Body(body, isHtml: false);
 
-        //var response = await emailFactory
-        //    .Create()
-        //    .To(toEmail)
-        //    .Subject(subject)
-        //    .Body(body)
-        //    .SendAsync();
+            var response = await email.SendAsync(cancellationToken);
 
-        //if (!response.Successful)
-        //    return Result.Failure(IdentityErrors.EmailSendFailed);
+            if (!response.Successful)
+            {
+                logger.LogError(
+                    "Failed to send email to {ToEmail}. Errors: {Errors}",
+                    toEmail,
+                    string.Join("; ", response.ErrorMessages));
 
-        logger.LogWarning(
-            "\n===== DEV: EMAIL NOT SENT (FluentEmailSender) =====\n" +
-            "To: {ToEmail}\n" +
-            "Subject: {Subject}\n" +
-            "{Body}\n" +
-            "=================================================\n" +
-            "Copy the verification code from the body above into POST /auth/confirm-email.",
-            toEmail,
-            subject,
-            body);
+                return Result.Failure(IdentityErrors.EmailSendFailed);
+            }
 
-        return Task.FromResult(Result.Success());
+            logger.LogInformation(
+               "Email sent successfully to {ToEmail}",
+               toEmail);
+
+            return Result.Success();
+
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(
+                ex,
+                "Unexpected error while sending email to {ToEmail}",
+                toEmail);
+
+            return Result.Failure(IdentityErrors.EmailSendFailed);
+        }
     }
 }
