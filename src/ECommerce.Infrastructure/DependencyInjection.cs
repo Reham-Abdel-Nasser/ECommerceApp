@@ -17,6 +17,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using System.Net;
+using System.Net.Mail;
 using System.Text;
 
 namespace ECommerce.Infrastructure;
@@ -104,7 +106,22 @@ public static class DependencyInjection
 
         services
             .AddFluentEmail(emailSettings.FromEmail, emailSettings.FromName)
-            .AddSmtpSender(emailSettings.Host, emailSettings.Port);
+            .AddSmtpSender(() =>
+            {
+                var client = new SmtpClient(emailSettings.Host, emailSettings.Port)
+                {
+                    EnableSsl = emailSettings.EnableSsl
+                };
+
+                if (!string.IsNullOrWhiteSpace(emailSettings.Username))
+                {
+                    client.Credentials = new NetworkCredential(
+                        emailSettings.Username,
+                        emailSettings.Password);
+                }
+
+                return client;
+            });
 
         services.AddScoped<IEmailSender, FluentEmailSender>();
 
